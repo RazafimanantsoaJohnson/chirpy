@@ -32,15 +32,32 @@ func (cfg *apiConfig) handlerReset(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(200)
 }
 
+func (cfg *apiConfig) handlerAdminMetrics(w http.ResponseWriter, r *http.Request) {
+	header := w.Header()
+	result := fmt.Sprintf(`
+		<html>
+		<body>
+			<h1>Welcome, Chirpy Admin</h1>
+			<p>Chirpy has been visited %d times!</p>
+		</body>
+		</html>
+	`, cfg.fileserverHits.Load())
+	header.Add("Content-Type", "text/html")
+	w.WriteHeader(200)
+	w.Write([]byte(result))
+}
+
 func main() {
 	port := "8080"
 	config := apiConfig{
 		fileserverHits: atomic.Int32{},
 	}
 	serveMux := http.NewServeMux()
-	serveMux.HandleFunc("/healthz", handleReadiness)
-	serveMux.HandleFunc("/metrics", config.handlerMetrics)
-	serveMux.HandleFunc("/reset", config.handlerReset)
+	serveMux.HandleFunc("/api/healthz", handleReadiness)
+	serveMux.HandleFunc("/api/metrics", config.handlerMetrics)
+	serveMux.HandleFunc("/api/reset", config.handlerReset)
+	serveMux.HandleFunc("/admin/reset", config.handlerReset) // adding a namespace "admin" (in backend server means a prefix to a path)
+	serveMux.HandleFunc("/admin/metrics", config.handlerAdminMetrics)
 	serveMux.Handle("/app/", config.middlewareMetricsInc(http.StripPrefix("/app", http.FileServer(http.Dir(".")))))
 	server := http.Server{
 		Addr:    ":" + port,
