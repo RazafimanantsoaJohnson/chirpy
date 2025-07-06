@@ -1,24 +1,20 @@
 package main
 
 import (
-	"encoding/json"
+	"database/sql"
 	"fmt"
-	"io"
 	"net/http"
+	"os"
 	"sync/atomic"
+
+	"github.com/RazafimanantsoaJohnson/chirpy/internal/database"
+	"github.com/joho/godotenv"
+	_ "github.com/lib/pq"
 )
 
 type apiConfig struct {
 	fileserverHits atomic.Int32
-}
-
-type chirp struct {
-	Body string `json:"body"`
-}
-
-type chirpResponse struct {
-	Err   string `json:"error"`
-	Valid bool   `json:"valid"`
+	dbQueries      *database.Queries
 }
 
 func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
@@ -39,6 +35,17 @@ func (cfg *apiConfig) handlerMetrics(w http.ResponseWriter, r *http.Request) {
 }
 
 func (cfg *apiConfig) handlerReset(w http.ResponseWriter, r *http.Request) {
+	platform := os.Getenv("PLATFORM")
+	if platform != "dev" {
+		w.WriteHeader(403)
+		return
+	}
+	err := cfg.dbQueries.DeleteAllUsers(r.Context())
+	if err != nil {
+		w.WriteHeader(500)
+		w.Write([]byte(err.Error()))
+		return
+	}
 	cfg.fileserverHits = atomic.Int32{}
 	w.WriteHeader(200)
 }
@@ -58,45 +65,33 @@ func (cfg *apiConfig) handlerAdminMetrics(w http.ResponseWriter, r *http.Request
 	w.Write([]byte(result))
 }
 
-func handlePostChirp(w http.ResponseWriter, r *http.Request) {
-	reqBody, err := io.ReadAll(r.Body)
-	var unmarshalledReqBody chirp
-	var resBody chirpResponse
-	err = json.Unmarshal(reqBody, &unmarshalledReqBody)
-	header := w.Header()
-	if err != nil {
-		header.Add("Content-Type", "text/plain")
-		w.WriteHeader(400)
-		w.Write([]byte("Server unable to read request body"))
-	}
-
-	if len(unmarshalledReqBody.Body) > 140 {
-		resBody.Err = "Something went wrong"
-		w.WriteHeader(400)
-	} else {
-		resBody.Valid = true
-		w.WriteHeader(200)
-	}
-	jsonResBody, err := json.Marshal(&resBody)
-	if err != nil {
-		w.WriteHeader(500)
-		header.Add("Content-Type", "text/plain")
-		w.Write([]byte("Server unable to parse response into JSON"))
-	}
-	w.Write(jsonResBody)
-
-}
-
 func main() {
 	port := "8080"
+	err := godotenv.Load()
+	if err != nil {
+		fmt.Errorf("server unable to read the environment variable")
+		os.Exit(1)
+	}
+	dbUrl := os.Getenv("DB_URL")
+	db, err := sql.Open("postgres", dbUrl)
+	if err != nil {
+		fmt.Errorf("server unable to connect to database")
+		os.Exit(1)
+	}
+	dbQueries := database.New(db)
 	config := apiConfig{
 		fileserverHits: atomic.Int32{},
+		dbQueries:      dbQueries,
 	}
+
 	serveMux := http.NewServeMux()
 	serveMux.HandleFunc("/api/healthz", handleReadiness)
 	serveMux.HandleFunc("/api/metrics", config.handlerMetrics)
-	serveMux.HandleFunc("/api/reset", config.handlerReset)
-	serveMux.HandleFunc("POST /api/validate_chirp", handlePostChirp)
+	serveMux.HandleFunc("POST /api/chirps", config.handlePostChirp)
+	serveMux.HandleFunc("GET /api/chirps", config.handleListChirps)
+	serveMux.HandleFunc("GET /api/chirps/{chirpId}", config.handleGetChirpById)
+	serveMux.HandleFunc("POST /api/users", config.handleCreateUser)
+	serveMux.HandleFunc("POST /api/login", config.handleLogin)
 	serveMux.HandleFunc("/admin/reset", config.handlerReset) // adding a namespace "admin" (in backend server means a prefix to a path)
 	serveMux.HandleFunc("/admin/metrics", config.handlerAdminMetrics)
 	serveMux.HandleFunc("GET /healthz", handleReadiness)
