@@ -1,7 +1,6 @@
 package auth
 
 import (
-	"log"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -9,17 +8,31 @@ import (
 )
 
 func MakeJWT(userId uuid.UUID, tokenSecret string, expiresIn time.Duration) (string, error) {
-	// the second argument is the what our token will contain
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.RegisteredClaims{
+	claim := &jwt.RegisteredClaims{
 		Issuer:    "chirpy",
 		IssuedAt:  jwt.NewNumericDate(time.Now().UTC()),
 		ExpiresAt: jwt.NewNumericDate(time.Now().Add(expiresIn).UTC()),
-		Subject:   userId.String(),
-	})
-	tokenString, err := token.SignedString(tokenSecret)
+		Subject:   userId.String(), //the data we actually want
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claim)
+	tokenString, err := token.SignedString([]byte(tokenSecret))
 	if err != nil {
 		return "", err
 	}
-	log.Println(tokenString)
 	return tokenString, nil
+}
+
+func ValidateJWT(tokenString, tokenSecret string) (uuid.UUID, error) {
+	claim := &jwt.RegisteredClaims{}
+	_, err := jwt.ParseWithClaims(tokenString, claim, func(token *jwt.Token) (interface{}, error) {
+		return []byte(tokenSecret), nil
+	})
+	if err != nil {
+		return uuid.UUID{}, err
+	}
+	userId, err := uuid.Parse(claim.Subject)
+	if err != nil {
+		return uuid.UUID{}, err
+	}
+	return userId, nil
 }
