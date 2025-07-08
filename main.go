@@ -3,21 +3,25 @@ package main
 import (
 	"database/sql"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"sync/atomic"
 
+	"github.com/RazafimanantsoaJohnson/chirpy/internal/auth"
 	"github.com/RazafimanantsoaJohnson/chirpy/internal/database"
+	"github.com/google/uuid"
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
 )
 
-type apiConfig struct {
+type ApiConfig struct {
 	fileserverHits atomic.Int32
 	dbQueries      *database.Queries
+	secretKey      string
 }
 
-func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
+func (cfg *ApiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
 	result := func(w http.ResponseWriter, r *http.Request) {
 		fmt.Println("we add a value")
 		cfg.fileserverHits.Add(1)
@@ -26,43 +30,24 @@ func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
 	return http.HandlerFunc(result)
 }
 
-func (cfg *apiConfig) handlerMetrics(w http.ResponseWriter, r *http.Request) {
-	numHits := fmt.Sprintf("Hits: %v", cfg.fileserverHits.Load())
-	header := w.Header()
-	header.Add("Content-Type", "text/plain; charset=utf-8")
-	w.WriteHeader(200)
-	w.Write([]byte(numHits))
-}
-
-func (cfg *apiConfig) handlerReset(w http.ResponseWriter, r *http.Request) {
-	platform := os.Getenv("PLATFORM")
-	if platform != "dev" {
-		w.WriteHeader(403)
-		return
+func (cfg *ApiConfig) middlewareCheckAuth(next func(http.ResponseWriter, *http.Request, *ApiConfig, uuid.UUID)) func(http.ResponseWriter, *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		receivedToken, err := auth.GetBearerToken(r.Header)
+		if err != nil {
+			log.Printf(err.Error())
+			w.WriteHeader(401)
+			w.Write([]byte("This user is not authorized to make this request"))
+			return
+		}
+		currentUserId, err := auth.ValidateJWT(receivedToken, cfg.secretKey)
+		if err != nil {
+			log.Printf(err.Error())
+			w.WriteHeader(401)
+			w.Write([]byte("This user is not authorized to make this request"))
+			return
+		}
+		next(w, r, cfg, currentUserId)
 	}
-	err := cfg.dbQueries.DeleteAllUsers(r.Context())
-	if err != nil {
-		w.WriteHeader(500)
-		w.Write([]byte(err.Error()))
-		return
-	}
-	cfg.fileserverHits = atomic.Int32{}
-	w.WriteHeader(200)
-}
-
-func (cfg *apiConfig) handlerAdminMetrics(w http.ResponseWriter, r *http.Request) {
-	header := w.Header()
-	result := fmt.Sprintf(`
-		<html>
-		<body>
-			<h1>Welcome, Chirpy Admin</h1>
-			<p>Chirpy has been visited %d times!</p>
-		</body>
-		</html>
-	`, cfg.fileserverHits.Load())
-	header.Add("Content-Type", "text/html")
-	w.WriteHeader(200)
-	w.Write([]byte(result))
 }
 
 func main() {
@@ -79,15 +64,16 @@ func main() {
 		os.Exit(1)
 	}
 	dbQueries := database.New(db)
-	config := apiConfig{
+	config := ApiConfig{
 		fileserverHits: atomic.Int32{},
 		dbQueries:      dbQueries,
+		secretKey:      os.Getenv("SECRET"),
 	}
 
 	serveMux := http.NewServeMux()
 	serveMux.HandleFunc("/api/healthz", handleReadiness)
 	serveMux.HandleFunc("/api/metrics", config.handlerMetrics)
-	serveMux.HandleFunc("POST /api/chirps", config.handlePostChirp)
+	serveMux.HandleFunc("POST /api/chirps", config.middlewareCheckAuth(handlePostChirp))
 	serveMux.HandleFunc("GET /api/chirps", config.handleListChirps)
 	serveMux.HandleFunc("GET /api/chirps/{chirpId}", config.handleGetChirpById)
 	serveMux.HandleFunc("POST /api/users", config.handleCreateUser)

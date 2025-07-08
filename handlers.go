@@ -2,10 +2,13 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/RazafimanantsoaJohnson/chirpy/internal/auth"
@@ -36,6 +39,7 @@ type userResponse struct {
 	Email      string    `json:"email"`
 	Created_at time.Time `json:"created_at"`
 	Updated_at time.Time `json:"updated_at"`
+	Token      string    `json:"token"`
 }
 
 func handleReadiness(w http.ResponseWriter, r *http.Request) {
@@ -45,10 +49,10 @@ func handleReadiness(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("OK"))
 }
 
-func (cfg *apiConfig) handlePostChirp(w http.ResponseWriter, r *http.Request) {
+func handlePostChirp(w http.ResponseWriter, r *http.Request, cfg *ApiConfig, currentUserId uuid.UUID) {
 	header := w.Header()
 	parameters := unmarshalRequestBody[chirp](w, r)
-
+	parameters.UserId = currentUserId.String()
 	if len(parameters.Body) > 140 {
 		w.WriteHeader(400)
 	} else {
@@ -58,7 +62,7 @@ func (cfg *apiConfig) handlePostChirp(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func handleProfane(w http.ResponseWriter, r *http.Request, reqBody chirp, cfg *apiConfig) {
+func handleProfane(w http.ResponseWriter, r *http.Request, reqBody chirp, cfg *ApiConfig) {
 	header := w.Header()
 	type returnCleanedBody struct {
 		CleanBody string `json:"cleaned_body"`
@@ -107,7 +111,7 @@ func handleProfane(w http.ResponseWriter, r *http.Request, reqBody chirp, cfg *a
 	w.Write(jsonResBody)
 }
 
-func (cfg *apiConfig) handleCreateUser(w http.ResponseWriter, r *http.Request) {
+func (cfg *ApiConfig) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	header := w.Header()
 	reqBody := unmarshalRequestBody[userParam](w, r)
 	hashed_password, err := auth.HashPassword(reqBody.Password)
@@ -144,7 +148,7 @@ func (cfg *apiConfig) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	w.Write(jsonResponse)
 }
 
-func (cfg *apiConfig) handleListChirps(w http.ResponseWriter, r *http.Request) {
+func (cfg *ApiConfig) handleListChirps(w http.ResponseWriter, r *http.Request) {
 	chirpList, err := cfg.dbQueries.GetAllChirps(r.Context())
 	header := w.Header()
 	if err != nil {
@@ -173,7 +177,7 @@ func (cfg *apiConfig) handleListChirps(w http.ResponseWriter, r *http.Request) {
 	w.Write(jsonChirps)
 }
 
-func (cfg *apiConfig) handleGetChirpById(w http.ResponseWriter, r *http.Request) {
+func (cfg *ApiConfig) handleGetChirpById(w http.ResponseWriter, r *http.Request) {
 	pathChirpId := r.PathValue("chirpId")
 	header := w.Header()
 	chirpId, err := uuid.Parse(pathChirpId)
@@ -202,10 +206,11 @@ func (cfg *apiConfig) handleGetChirpById(w http.ResponseWriter, r *http.Request)
 	w.Write(response)
 }
 
-func (cfg *apiConfig) handleLogin(w http.ResponseWriter, r *http.Request) {
+func (cfg *ApiConfig) handleLogin(w http.ResponseWriter, r *http.Request) {
 	type loginParams struct {
-		Email    string `json:"email"`
-		Password string `json:"password"`
+		Email     string `json:"email"`
+		Password  string `json:"password"`
+		ExpiresIn int    `json:"expires_in_seconds"`
 	}
 	reqBody := unmarshalRequestBody[loginParams](w, r)
 	queriedUser, err := cfg.dbQueries.GetUserByEmail(r.Context(), reqBody.Email)
@@ -215,11 +220,24 @@ func (cfg *apiConfig) handleLogin(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(401)
 		return
 	}
+
+	// tokenDuration := 3600
+	// if reqBody.ExpiresIn <= 3600 {
+	// 	tokenDuration = reqBody.ExpiresIn
+	// }
+	token, err := auth.MakeJWT(queriedUser.ID, cfg.secretKey, 1*time.Hour)
+	if err != nil {
+		log.Printf("error generating the JWT: %v", err)
+		w.WriteHeader(500)
+		return
+	}
+
 	response, err := json.Marshal(userResponse{
 		Id:         queriedUser.ID.String(),
 		Email:      queriedUser.Email,
 		Created_at: queriedUser.CreatedAt,
 		Updated_at: queriedUser.UpdatedAt,
+		Token:      token,
 	})
 	if err != nil {
 		log.Printf("error parsing the response to JSON: %v", err)
@@ -228,6 +246,45 @@ func (cfg *apiConfig) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(200)
 	w.Write(response)
+}
+
+func (cfg *ApiConfig) handlerMetrics(w http.ResponseWriter, r *http.Request) {
+	numHits := fmt.Sprintf("Hits: %v", cfg.fileserverHits.Load())
+	header := w.Header()
+	header.Add("Content-Type", "text/plain; charset=utf-8")
+	w.WriteHeader(200)
+	w.Write([]byte(numHits))
+}
+
+func (cfg *ApiConfig) handlerReset(w http.ResponseWriter, r *http.Request) {
+	platform := os.Getenv("PLATFORM")
+	if platform != "dev" {
+		w.WriteHeader(403)
+		return
+	}
+	err := cfg.dbQueries.DeleteAllUsers(r.Context())
+	if err != nil {
+		w.WriteHeader(500)
+		w.Write([]byte(err.Error()))
+		return
+	}
+	cfg.fileserverHits = atomic.Int32{}
+	w.WriteHeader(200)
+}
+
+func (cfg *ApiConfig) handlerAdminMetrics(w http.ResponseWriter, r *http.Request) {
+	header := w.Header()
+	result := fmt.Sprintf(`
+		<html>
+		<body>
+			<h1>Welcome, Chirpy Admin</h1>
+			<p>Chirpy has been visited %d times!</p>
+		</body>
+		</html>
+	`, cfg.fileserverHits.Load())
+	header.Add("Content-Type", "text/html")
+	w.WriteHeader(200)
+	w.Write([]byte(result))
 }
 
 func unmarshalRequestBody[T any](w http.ResponseWriter, r *http.Request) *T { // using generics is the way to go for functions to handle many types

@@ -2,6 +2,7 @@ package auth
 
 import (
 	"fmt"
+	"net/http"
 	"testing"
 	"time"
 
@@ -54,4 +55,33 @@ func TestTokenExpiry(t *testing.T) {
 	if err == nil {
 		t.Errorf("The token should not be validated, it should be expired")
 	}
+}
+
+func TestGetRequestToken(t *testing.T) {
+	cases := []string{
+		"token1", "token2",
+	}
+	for _, c := range cases {
+		req, err := http.NewRequest("GET", "http://nowhere.com", nil)
+		req.Header.Add("Authorization", "Bearer "+c)
+		token, err := GetBearerToken(req.Header)
+		if err != nil {
+			t.Errorf("error happen when getting the bearer token")
+			return
+		}
+		if c != token {
+			t.Errorf("error: provided token '%v' != received token '%v'", c, token)
+			return
+		}
+	}
+}
+
+func TestCreateRefreshToken(t *testing.T) {
+	newRandom, err := MakeRefreshToken()
+	if err != nil {
+		t.Errorf("error happened when generating token %v", err)
+		return
+	}
+	fmt.Println(len("c59977389895a740b5d7e6b2b8f949f4e96f4919d3cf5501bd677473b88fc839"))
+	t.Errorf("the new Random: %v", newRandom)
 }
