@@ -328,6 +328,23 @@ func (cfg *ApiConfig) handlerRefreshToken(w http.ResponseWriter, r *http.Request
 	w.Write(jsonResponse)
 }
 
+func (cfg *ApiConfig) handlerRevokeRefreshToken(w http.ResponseWriter, r *http.Request) {
+	providedToken, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+		log.Printf("error when getting bearer token: %v", err)
+		w.WriteHeader(401)
+		return
+	}
+
+	err = cfg.dbQueries.RevokeToken(r.Context(), providedToken)
+	if err != nil {
+		log.Printf("error when revoking token: %v", err)
+		w.WriteHeader(401)
+		return
+	}
+	w.WriteHeader(204)
+}
+
 func createRefreshToken(userId uuid.UUID, r *http.Request, cfg *ApiConfig) (string, error) {
 	newRefreshToken, err := auth.MakeRefreshToken()
 	if err != nil {
