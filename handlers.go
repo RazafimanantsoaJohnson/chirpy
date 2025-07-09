@@ -345,6 +345,62 @@ func (cfg *ApiConfig) handlerRevokeRefreshToken(w http.ResponseWriter, r *http.R
 	w.WriteHeader(204)
 }
 
+func handlerEditUser(w http.ResponseWriter, r *http.Request, cfg *ApiConfig, curUserId uuid.UUID) {
+	type editUserResponse struct {
+		Id        string    `json:"id"`
+		Email     string    `json:"email"`
+		CreatedAt time.Time `json:"created_at"`
+		UpdatedAt time.Time `json:"updated_at"`
+	}
+
+	parameters := unmarshalRequestBody[userParam](w, r)
+	header := w.Header()
+	logedInUser, err := cfg.dbQueries.GetUserById(r.Context(), curUserId)
+	if err != nil {
+		w.WriteHeader(401)
+		return
+	}
+	if logedInUser.Email != parameters.Email {
+		log.Printf("loged in user '%v', user to update '%v'", logedInUser.Email, parameters.Email)
+		header.Add("Content-Type", "text/plain")
+		w.WriteHeader(401)
+		w.Write([]byte("this user is not authorized to do the action"))
+		return
+	}
+
+	hashedPassword, err := auth.HashPassword(parameters.Password)
+	if err != nil {
+		w.WriteHeader(500)
+		return
+	}
+	editedUser, err := cfg.dbQueries.UpdateUser(r.Context(), database.UpdateUserParams{
+		ID:             logedInUser.ID,
+		Email:          parameters.Email,
+		HashedPassword: hashedPassword,
+	})
+	if err != nil {
+		w.WriteHeader(401)
+		log.Printf("user to update id: %v")
+		log.Printf("error when updating the user %v", err)
+		return
+	}
+
+	jsonUser, err := json.Marshal(&editUserResponse{
+		Id:        editedUser.ID.String(),
+		Email:     editedUser.Email,
+		CreatedAt: editedUser.CreatedAt,
+		UpdatedAt: editedUser.UpdatedAt,
+	})
+	if err != nil {
+		w.WriteHeader(500)
+		log.Printf("error when parsing the Response to JSON")
+		return
+	}
+	header.Add("Content-Type", "application/json")
+	w.WriteHeader(200)
+	w.Write(jsonUser)
+}
+
 func createRefreshToken(userId uuid.UUID, r *http.Request, cfg *ApiConfig) (string, error) {
 	newRefreshToken, err := auth.MakeRefreshToken()
 	if err != nil {
