@@ -77,11 +77,10 @@ func TestGetRequestToken(t *testing.T) {
 }
 
 func TestCreateRefreshToken(t *testing.T) {
-	newRandom, err := MakeRefreshToken()
+	_, err := MakeRefreshToken()
 	if err != nil {
 		t.Errorf("error happened when generating token %v", err)
 		return
 	}
-	fmt.Println(len("c59977389895a740b5d7e6b2b8f949f4e96f4919d3cf5501bd677473b88fc839"))
-	t.Errorf("the new Random: %v", newRandom)
+	// t.Errorf("the new Random: %v", newRandom)
 }

@@ -35,11 +35,12 @@ type chirpResponse struct {
 }
 
 type userResponse struct {
-	Id         string    `json:"id"`
-	Email      string    `json:"email"`
-	Created_at time.Time `json:"created_at"`
-	Updated_at time.Time `json:"updated_at"`
-	Token      string    `json:"token"`
+	Id           string    `json:"id"`
+	Email        string    `json:"email"`
+	Created_at   time.Time `json:"created_at"`
+	Updated_at   time.Time `json:"updated_at"`
+	Token        string    `json:"token"`
+	RefreshToken string    `json:"refresh_token"`
 }
 
 func handleReadiness(w http.ResponseWriter, r *http.Request) {
@@ -220,11 +221,6 @@ func (cfg *ApiConfig) handleLogin(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(401)
 		return
 	}
-
-	// tokenDuration := 3600
-	// if reqBody.ExpiresIn <= 3600 {
-	// 	tokenDuration = reqBody.ExpiresIn
-	// }
 	token, err := auth.MakeJWT(queriedUser.ID, cfg.secretKey, 1*time.Hour)
 	if err != nil {
 		log.Printf("error generating the JWT: %v", err)
@@ -232,12 +228,21 @@ func (cfg *ApiConfig) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	refreshToken, err := createRefreshToken(queriedUser.ID, r, cfg)
+	if err != nil {
+		log.Printf("error when creating refresh token: %v", err)
+		w.WriteHeader(500)
+		w.Write([]byte("error when creating refresh token"))
+		return
+	}
+
 	response, err := json.Marshal(userResponse{
-		Id:         queriedUser.ID.String(),
-		Email:      queriedUser.Email,
-		Created_at: queriedUser.CreatedAt,
-		Updated_at: queriedUser.UpdatedAt,
-		Token:      token,
+		Id:           queriedUser.ID.String(),
+		Email:        queriedUser.Email,
+		Created_at:   queriedUser.CreatedAt,
+		Updated_at:   queriedUser.UpdatedAt,
+		Token:        token,
+		RefreshToken: refreshToken,
 	})
 	if err != nil {
 		log.Printf("error parsing the response to JSON: %v", err)
@@ -285,6 +290,58 @@ func (cfg *ApiConfig) handlerAdminMetrics(w http.ResponseWriter, r *http.Request
 	header.Add("Content-Type", "text/html")
 	w.WriteHeader(200)
 	w.Write([]byte(result))
+}
+
+func (cfg *ApiConfig) handlerRefreshToken(w http.ResponseWriter, r *http.Request) {
+	type refreshTokenResponse struct {
+		Token string `json:"token"`
+	}
+	header := w.Header()
+	bearerToken, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+		log.Printf("error happened when getting the bearer token: %v", err)
+		w.WriteHeader(401)
+		return
+	}
+	queriedRefreshToken, err := cfg.dbQueries.GetRefreshTokenById(r.Context(), bearerToken)
+	if err != nil {
+		log.Printf("error when querrying the refresh token %v", err)
+		w.WriteHeader(401)
+		return
+	}
+	fmt.Println(queriedRefreshToken)
+	newToken, err := auth.MakeJWT(queriedRefreshToken.UserID, cfg.secretKey, 1*time.Hour)
+	if err != nil {
+		log.Printf("error when creating a token from the refresh token: %v", err)
+		w.WriteHeader(500)
+		return
+	}
+
+	jsonResponse, err := json.Marshal(&refreshTokenResponse{Token: newToken})
+	if err != nil {
+		log.Printf("error when parsing the new token to JSON: %v", err)
+		w.WriteHeader(500)
+		return
+	}
+	w.WriteHeader(200)
+	header.Add("Content-Type", "application/json")
+	w.Write(jsonResponse)
+}
+
+func createRefreshToken(userId uuid.UUID, r *http.Request, cfg *ApiConfig) (string, error) {
+	newRefreshToken, err := auth.MakeRefreshToken()
+	if err != nil {
+		return "", err
+	}
+	_, err = cfg.dbQueries.CreateRefreshToken(r.Context(), database.CreateRefreshTokenParams{
+		Token:     newRefreshToken,
+		ExpiresAt: time.Now().Add((60 * 24) * time.Hour),
+		UserID:    userId,
+	})
+	if err != nil {
+		return "", err
+	}
+	return newRefreshToken, nil
 }
 
 func unmarshalRequestBody[T any](w http.ResponseWriter, r *http.Request) *T { // using generics is the way to go for functions to handle many types

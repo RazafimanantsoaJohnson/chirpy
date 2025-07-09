@@ -5,7 +5,7 @@ import (
 	"encoding/hex"
 )
 
-func MakeRefreshToken() (string, error) {
+func MakeRefreshToken() (string, error) { // just a random number that we return as a string
 	refreshToken := make([]byte, 32)
 	_, err := rand.Read(refreshToken)
 	if err != nil {

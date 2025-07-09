@@ -34,14 +34,14 @@ func (cfg *ApiConfig) middlewareCheckAuth(next func(http.ResponseWriter, *http.R
 	return func(w http.ResponseWriter, r *http.Request) {
 		receivedToken, err := auth.GetBearerToken(r.Header)
 		if err != nil {
-			log.Printf(err.Error())
+			log.Printf("%v", err)
 			w.WriteHeader(401)
 			w.Write([]byte("This user is not authorized to make this request"))
 			return
 		}
 		currentUserId, err := auth.ValidateJWT(receivedToken, cfg.secretKey)
 		if err != nil {
-			log.Printf(err.Error())
+			log.Printf("%v", err)
 			w.WriteHeader(401)
 			w.Write([]byte("This user is not authorized to make this request"))
 			return
@@ -78,6 +78,7 @@ func main() {
 	serveMux.HandleFunc("GET /api/chirps/{chirpId}", config.handleGetChirpById)
 	serveMux.HandleFunc("POST /api/users", config.handleCreateUser)
 	serveMux.HandleFunc("POST /api/login", config.handleLogin)
+	serveMux.HandleFunc("POST /api/refresh", config.handlerRefreshToken)
 	serveMux.HandleFunc("/admin/reset", config.handlerReset) // adding a namespace "admin" (in backend server means a prefix to a path)
 	serveMux.HandleFunc("/admin/metrics", config.handlerAdminMetrics)
 	serveMux.HandleFunc("GET /healthz", handleReadiness)
