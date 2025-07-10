@@ -81,6 +81,7 @@ func main() {
 	serveMux.HandleFunc("POST /api/login", config.handleLogin)
 	serveMux.HandleFunc("POST /api/refresh", config.handlerRefreshToken)
 	serveMux.HandleFunc("POST /api/revoke", config.handlerRevokeRefreshToken)
+	serveMux.HandleFunc("POST /api/polka/webhooks", config.handlerUpgradeUserToChirpRed)
 	serveMux.HandleFunc("/admin/reset", config.handlerReset) // adding a namespace "admin" (in backend server means a prefix to a path)
 	serveMux.HandleFunc("/admin/metrics", config.handlerAdminMetrics)
 	serveMux.HandleFunc("GET /healthz", handleReadiness)
