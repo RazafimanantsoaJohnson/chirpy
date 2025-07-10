@@ -76,6 +76,7 @@ func main() {
 	serveMux.HandleFunc("POST /api/chirps", config.middlewareCheckAuth(handlePostChirp))
 	serveMux.HandleFunc("GET /api/chirps", config.handleListChirps)
 	serveMux.HandleFunc("GET /api/chirps/{chirpId}", config.handleGetChirpById)
+	serveMux.HandleFunc("DELETE /api/chirps/{chirpId}", config.middlewareCheckAuth(handlerDeleteChirp))
 	serveMux.HandleFunc("POST /api/users", config.handleCreateUser)
 	serveMux.HandleFunc("PUT /api/users", config.middlewareCheckAuth(handlerEditUser))
 	serveMux.HandleFunc("POST /api/login", config.handleLogin)
