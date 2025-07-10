@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -41,6 +42,14 @@ type userResponse struct {
 	Updated_at   time.Time `json:"updated_at"`
 	Token        string    `json:"token"`
 	RefreshToken string    `json:"refresh_token"`
+	IsChirpyRed  bool      `json:"is_chirpy_red"`
+}
+
+type polkaWebhookBody struct {
+	Event string `json:"event"`
+	Data  struct {
+		UserId string `json:"user_id"`
+	} `json:"data"`
 }
 
 func handleReadiness(w http.ResponseWriter, r *http.Request) {
@@ -132,10 +141,11 @@ func (cfg *ApiConfig) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	uResponse := userResponse{
-		Id:         response.ID.String(),
-		Email:      response.Email,
-		Created_at: response.CreatedAt,
-		Updated_at: response.UpdatedAt,
+		Id:          response.ID.String(),
+		Email:       response.Email,
+		Created_at:  response.CreatedAt,
+		Updated_at:  response.UpdatedAt,
+		IsChirpyRed: response.IsChirpyRed.Bool,
 	}
 	jsonResponse, err := json.Marshal(&uResponse)
 	if err != nil {
@@ -150,12 +160,29 @@ func (cfg *ApiConfig) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 }
 
 func (cfg *ApiConfig) handleListChirps(w http.ResponseWriter, r *http.Request) {
-	chirpList, err := cfg.dbQueries.GetAllChirps(r.Context())
+	queryAuthorId := r.URL.Query().Get("author_id")
+	orderQuery := r.URL.Query().Get("order")
+	chirpList := []database.Chirp{}
+	var err error
 	header := w.Header()
+	if queryAuthorId != "" {
+		authorId, err := uuid.Parse(queryAuthorId)
+		if err != nil {
+			w.WriteHeader(400)
+			return
+		}
+		chirpList, err = cfg.dbQueries.GetAllChirpsFromAuthor(r.Context(), authorId)
+	} else {
+		chirpList, err = cfg.dbQueries.GetAllChirps(r.Context())
+	}
+	if orderQuery != "" && orderQuery == "desc" {
+		chirpList = orderChirpsDesc(chirpList)
+	}
 	if err != nil {
 		w.WriteHeader(500)
 		header.Add("Content-Type", "text/plain")
 		w.Write([]byte("server unable to list chirps"))
+		return
 	}
 	chirps := make([]chirpResponse, len(chirpList))
 	for i, chirp := range chirpList {
@@ -172,6 +199,7 @@ func (cfg *ApiConfig) handleListChirps(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(500)
 		header.Add("Content-Type", "text/plain")
 		w.Write([]byte("server unable to parse chirps into JSON"))
+		return
 	}
 	header.Add("Content-Type", "application/json")
 	w.WriteHeader(200)
@@ -241,6 +269,7 @@ func (cfg *ApiConfig) handleLogin(w http.ResponseWriter, r *http.Request) {
 		Email:        queriedUser.Email,
 		Created_at:   queriedUser.CreatedAt,
 		Updated_at:   queriedUser.UpdatedAt,
+		IsChirpyRed:  queriedUser.IsChirpyRed.Bool,
 		Token:        token,
 		RefreshToken: refreshToken,
 	})
@@ -351,10 +380,11 @@ func (cfg *ApiConfig) handlerRevokeRefreshToken(w http.ResponseWriter, r *http.R
 
 func handlerEditUser(w http.ResponseWriter, r *http.Request, cfg *ApiConfig, curUserId uuid.UUID) {
 	type editUserResponse struct {
-		Id        string    `json:"id"`
-		Email     string    `json:"email"`
-		CreatedAt time.Time `json:"created_at"`
-		UpdatedAt time.Time `json:"updated_at"`
+		Id          string    `json:"id"`
+		Email       string    `json:"email"`
+		CreatedAt   time.Time `json:"created_at"`
+		UpdatedAt   time.Time `json:"updated_at"`
+		IsChirpyRed bool      `json:"is_chirpy_red"`
 	}
 
 	parameters := unmarshalRequestBody[userParam](w, r)
@@ -392,10 +422,11 @@ func handlerEditUser(w http.ResponseWriter, r *http.Request, cfg *ApiConfig, cur
 	}
 
 	jsonUser, err := json.Marshal(&editUserResponse{
-		Id:        editedUser.ID.String(),
-		Email:     editedUser.Email,
-		CreatedAt: editedUser.CreatedAt,
-		UpdatedAt: editedUser.UpdatedAt,
+		Id:          editedUser.ID.String(),
+		Email:       editedUser.Email,
+		CreatedAt:   editedUser.CreatedAt,
+		UpdatedAt:   editedUser.UpdatedAt,
+		IsChirpyRed: editedUser.IsChirpyRed.Bool,
 	})
 	if err != nil {
 		w.WriteHeader(500)
@@ -407,6 +438,40 @@ func handlerEditUser(w http.ResponseWriter, r *http.Request, cfg *ApiConfig, cur
 	w.Write(jsonUser)
 }
 
+
+func (cfg *ApiConfig) handlerUpgradeUserToChirpRed(w http.ResponseWriter, r *http.Request) {
+	parameters := unmarshalRequestBody[polkaWebhookBody](w, r)
+	providedApiKey, err := auth.GetApiKey(r.Header)
+	if err != nil {
+		w.WriteHeader(401)
+		return
+	}
+	if providedApiKey != cfg.polkaKey {
+		w.WriteHeader(401)
+		return
+	}
+	if parameters.Event == "user.upgraded" {
+		userId, err := uuid.Parse(parameters.Data.UserId)
+		if err != nil {
+			w.WriteHeader(404)
+			return
+		}
+		err = cfg.dbQueries.UpgradeToChirpyRed(r.Context(), userId)
+		if err != nil {
+			log.Printf("error when upgrading user to chirpy red : %v", err)
+			w.WriteHeader(404)
+			return
+		}
+		w.WriteHeader(204)
+		return
+	}
+	w.WriteHeader(204)
+}
+
+func orderChirpsDesc(chirps []database.Chirp) []database.Chirp {
+	sort.Slice(chirps, func(i, j int) bool { return chirps[i].CreatedAt.After(chirps[j].CreatedAt) })
+	return chirps // already mutated but still...
+}
 func handlerDeleteChirp(w http.ResponseWriter, r *http.Request, cfg *ApiConfig, curUserId uuid.UUID) {
 	chirpId := r.PathValue("chirpId")
 	if chirpId == "" {
@@ -440,6 +505,7 @@ func handlerDeleteChirp(w http.ResponseWriter, r *http.Request, cfg *ApiConfig, 
 	}
 
 	w.WriteHeader(204)
+  
 }
 
 func createRefreshToken(userId uuid.UUID, r *http.Request, cfg *ApiConfig) (string, error) {

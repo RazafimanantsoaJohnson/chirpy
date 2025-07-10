@@ -19,6 +19,7 @@ type ApiConfig struct {
 	fileserverHits atomic.Int32
 	dbQueries      *database.Queries
 	secretKey      string
+	polkaKey       string
 }
 
 func (cfg *ApiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
@@ -68,6 +69,7 @@ func main() {
 		fileserverHits: atomic.Int32{},
 		dbQueries:      dbQueries,
 		secretKey:      os.Getenv("SECRET"),
+		polkaKey:       os.Getenv("POLKA_KEY"),
 	}
 
 	serveMux := http.NewServeMux()
@@ -82,6 +84,7 @@ func main() {
 	serveMux.HandleFunc("POST /api/login", config.handleLogin)
 	serveMux.HandleFunc("POST /api/refresh", config.handlerRefreshToken)
 	serveMux.HandleFunc("POST /api/revoke", config.handlerRevokeRefreshToken)
+	serveMux.HandleFunc("POST /api/polka/webhooks", config.handlerUpgradeUserToChirpRed)
 	serveMux.HandleFunc("/admin/reset", config.handlerReset) // adding a namespace "admin" (in backend server means a prefix to a path)
 	serveMux.HandleFunc("/admin/metrics", config.handlerAdminMetrics)
 	serveMux.HandleFunc("GET /healthz", handleReadiness)
