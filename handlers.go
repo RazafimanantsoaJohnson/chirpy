@@ -159,12 +159,25 @@ func (cfg *ApiConfig) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 }
 
 func (cfg *ApiConfig) handleListChirps(w http.ResponseWriter, r *http.Request) {
-	chirpList, err := cfg.dbQueries.GetAllChirps(r.Context())
+	queryAuthorId := r.URL.Query().Get("author_id")
+	chirpList := []database.Chirp{}
+	var err error
 	header := w.Header()
+	if queryAuthorId != "" {
+		authorId, err := uuid.Parse(queryAuthorId)
+		if err != nil {
+			w.WriteHeader(400)
+			return
+		}
+		chirpList, err = cfg.dbQueries.GetAllChirpsFromAuthor(r.Context(), authorId)
+	} else {
+		chirpList, err = cfg.dbQueries.GetAllChirps(r.Context())
+	}
 	if err != nil {
 		w.WriteHeader(500)
 		header.Add("Content-Type", "text/plain")
 		w.Write([]byte("server unable to list chirps"))
+		return
 	}
 	chirps := make([]chirpResponse, len(chirpList))
 	for i, chirp := range chirpList {
@@ -181,6 +194,7 @@ func (cfg *ApiConfig) handleListChirps(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(500)
 		header.Add("Content-Type", "text/plain")
 		w.Write([]byte("server unable to parse chirps into JSON"))
+		return
 	}
 	header.Add("Content-Type", "application/json")
 	w.WriteHeader(200)
