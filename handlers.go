@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -160,6 +161,7 @@ func (cfg *ApiConfig) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 
 func (cfg *ApiConfig) handleListChirps(w http.ResponseWriter, r *http.Request) {
 	queryAuthorId := r.URL.Query().Get("author_id")
+	orderQuery := r.URL.Query().Get("order")
 	chirpList := []database.Chirp{}
 	var err error
 	header := w.Header()
@@ -172,6 +174,9 @@ func (cfg *ApiConfig) handleListChirps(w http.ResponseWriter, r *http.Request) {
 		chirpList, err = cfg.dbQueries.GetAllChirpsFromAuthor(r.Context(), authorId)
 	} else {
 		chirpList, err = cfg.dbQueries.GetAllChirps(r.Context())
+	}
+	if orderQuery != "" && orderQuery == "desc" {
+		chirpList = orderChirpsDesc(chirpList)
 	}
 	if err != nil {
 		w.WriteHeader(500)
@@ -454,6 +459,11 @@ func (cfg *ApiConfig) handlerUpgradeUserToChirpRed(w http.ResponseWriter, r *htt
 		return
 	}
 	w.WriteHeader(204)
+}
+
+func orderChirpsDesc(chirps []database.Chirp) []database.Chirp {
+	sort.Slice(chirps, func(i, j int) bool { return chirps[i].CreatedAt.After(chirps[j].CreatedAt) })
+	return chirps // already mutated but still...
 }
 
 func createRefreshToken(userId uuid.UUID, r *http.Request, cfg *ApiConfig) (string, error) {
