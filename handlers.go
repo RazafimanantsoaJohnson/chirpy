@@ -338,7 +338,11 @@ func (cfg *ApiConfig) handlerRefreshToken(w http.ResponseWriter, r *http.Request
 		w.WriteHeader(401)
 		return
 	}
-	fmt.Println(queriedRefreshToken)
+	if queriedRefreshToken.RevokedAt.Valid {
+		log.Printf("the token has already been revoked")
+		w.WriteHeader(401)
+		return
+	}
 	newToken, err := auth.MakeJWT(queriedRefreshToken.UserID, cfg.secretKey, 1*time.Hour)
 	if err != nil {
 		log.Printf("error when creating a token from the refresh token: %v", err)
@@ -390,14 +394,16 @@ func handlerEditUser(w http.ResponseWriter, r *http.Request, cfg *ApiConfig, cur
 		w.WriteHeader(401)
 		return
 	}
-	if logedInUser.Email != parameters.Email {
-		log.Printf("loged in user '%v', user to update '%v'", logedInUser.Email, parameters.Email)
-		header.Add("Content-Type", "text/plain")
-		w.WriteHeader(401)
-		w.Write([]byte("this user is not authorized to do the action"))
-		return
-	}
-
+	/*
+			WRONG check
+		if logedInUser.Email != parameters.Email {
+			log.Printf("loged in user '%v', user to update '%v'", logedInUser.Email, parameters.Email)
+			header.Add("Content-Type", "text/plain")
+			w.WriteHeader(401)
+			w.Write([]byte("this user is not authorized to do the action"))
+			return
+		}
+	*/
 	hashedPassword, err := auth.HashPassword(parameters.Password)
 	if err != nil {
 		w.WriteHeader(500)
@@ -432,6 +438,7 @@ func handlerEditUser(w http.ResponseWriter, r *http.Request, cfg *ApiConfig, cur
 	w.Write(jsonUser)
 }
 
+
 func (cfg *ApiConfig) handlerUpgradeUserToChirpRed(w http.ResponseWriter, r *http.Request) {
 	parameters := unmarshalRequestBody[polkaWebhookBody](w, r)
 	providedApiKey, err := auth.GetApiKey(r.Header)
@@ -464,6 +471,41 @@ func (cfg *ApiConfig) handlerUpgradeUserToChirpRed(w http.ResponseWriter, r *htt
 func orderChirpsDesc(chirps []database.Chirp) []database.Chirp {
 	sort.Slice(chirps, func(i, j int) bool { return chirps[i].CreatedAt.After(chirps[j].CreatedAt) })
 	return chirps // already mutated but still...
+}
+func handlerDeleteChirp(w http.ResponseWriter, r *http.Request, cfg *ApiConfig, curUserId uuid.UUID) {
+	chirpId := r.PathValue("chirpId")
+	if chirpId == "" {
+		w.WriteHeader(401)
+		return
+	}
+	chirpUuid, err := uuid.Parse(chirpId)
+	if err != nil {
+		log.Printf("error when parsing the chirpId")
+		w.WriteHeader(500)
+		return
+	}
+
+	chirp, err := cfg.dbQueries.GetChirpById(r.Context(), chirpUuid)
+	if err != nil {
+		log.Printf("error when getting the chirp by Id: %v", err)
+		w.WriteHeader(404)
+		return
+	}
+	if chirp.UserID != curUserId {
+		log.Printf("error when deleting the chirp creator: %v/ current user: %v", chirp.UserID, curUserId)
+		w.WriteHeader(403)
+		return
+	}
+
+	err = cfg.dbQueries.DeleteChirpWithId(r.Context(), chirp.ID)
+	if err != nil {
+		w.WriteHeader(500)
+		log.Printf("error when deleting the chirp: %v", err)
+		return
+	}
+
+	w.WriteHeader(204)
+  
 }
 
 func createRefreshToken(userId uuid.UUID, r *http.Request, cfg *ApiConfig) (string, error) {

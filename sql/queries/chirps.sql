@@ -12,3 +12,7 @@ SELECT * FROM chirps WHERE id= $1 LIMIT 1;
 
 -- name: GetAllChirpsFromAuthor :many
 SELECT * FROM chirps WHERE user_id=$1 ORDER BY created_at ASC;
+
+-- name: DeleteChirpWithId :exec
+DELETE FROM chirps WHERE id=$1;
+
