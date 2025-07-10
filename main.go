@@ -19,6 +19,7 @@ type ApiConfig struct {
 	fileserverHits atomic.Int32
 	dbQueries      *database.Queries
 	secretKey      string
+	polkaKey       string
 }
 
 func (cfg *ApiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
@@ -68,6 +69,7 @@ func main() {
 		fileserverHits: atomic.Int32{},
 		dbQueries:      dbQueries,
 		secretKey:      os.Getenv("SECRET"),
+		polkaKey:       os.Getenv("POLKA_KEY"),
 	}
 
 	serveMux := http.NewServeMux()

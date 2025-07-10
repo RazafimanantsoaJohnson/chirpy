@@ -415,6 +415,15 @@ func handlerEditUser(w http.ResponseWriter, r *http.Request, cfg *ApiConfig, cur
 
 func (cfg *ApiConfig) handlerUpgradeUserToChirpRed(w http.ResponseWriter, r *http.Request) {
 	parameters := unmarshalRequestBody[polkaWebhookBody](w, r)
+	providedApiKey, err := auth.GetApiKey(r.Header)
+	if err != nil {
+		w.WriteHeader(401)
+		return
+	}
+	if providedApiKey != cfg.polkaKey {
+		w.WriteHeader(401)
+		return
+	}
 	if parameters.Event == "user.upgraded" {
 		userId, err := uuid.Parse(parameters.Data.UserId)
 		if err != nil {
